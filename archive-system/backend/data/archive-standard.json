@@ -1,0 +1,125 @@
+{
+  "version": "NAS项目资料归档规范20260626",
+  "source": "NAS项目资料归档规范20260626.docx",
+  "projectRootPattern": "YYYYMMDD-项目名称",
+  "principles": [
+    "归档目录和命名规则以本规范为唯一标准",
+    "AI 只生成建议，最终归档必须人工确认",
+    "原始上传文件保留，不直接覆盖或删除",
+    "4.成果资料不由 AI 自动归档"
+  ],
+  "rootFolders": [
+    {
+      "id": "project-materials",
+      "name": "1.项目资料",
+      "description": "项目启动、手续办理、甲方提供、申报报审、范围位置和基础身份类资料。",
+      "children": []
+    },
+    {
+      "id": "business-materials",
+      "name": "2.商务资料",
+      "description": "合同、报价、付款、发票、招投标、商务沟通和商务确认文件。",
+      "children": [
+        {
+          "id": "contract-scans",
+          "name": "合同扫描",
+          "description": "合同扫描件。",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "execution-materials",
+      "name": "3.执行资料",
+      "description": "外业、CAD、内业和报告等执行阶段资料。",
+      "children": [
+        {
+          "id": "field-originals",
+          "name": "1.外业原始资料",
+          "description": "外业阶段形成的原始照片、原始记录、现场过程材料、未筛选影像、无人机原片、测绘采集过程文件和其他外业原始资料。",
+          "children": []
+        },
+        {
+          "id": "field-results",
+          "name": "2.外业成果",
+          "description": "从外业原始资料中筛选、整理后的外业成果资料，可进入报告并被智能报告脚本调用。",
+          "children": [
+            { "id": "site-current", "name": "1.项目地块现状照", "description": "项目地块、地表现状、没有探孔的航拍、地貌航拍、现状全景。", "children": [] },
+            { "id": "interview", "name": "2.走访调查照", "description": "现场走访、与村民或居民交流的照片。", "children": [] },
+            { "id": "surface-survey", "name": "3.实地踏查照", "description": "人员在现场踏查地表的工作照。", "children": [] },
+            { "id": "info-collection", "name": "4.信息采集照", "description": "RTK 采集、无人机起飞或操作、测绘采集过程照。", "children": [] },
+            { "id": "unit-layout", "name": "5.勘探单元布置照", "description": "标出勘探单元西南角点等单元布置照片。", "children": [] },
+            { "id": "hole-layout", "name": "6.布设探孔照", "description": "撒白粉定点、布设探孔位置的照片。", "children": [] },
+            { "id": "probing-work", "name": "7.普探工作照", "description": "工作人员拿洛阳铲普探、打眼、钻探的工作照。", "children": [] },
+            { "id": "sampling", "name": "8.取样记录照", "description": "人在铲子旁取土样、放到土样板上的过程照；不放单独土样板、探孔土芯、遗迹土样。", "children": [] },
+            { "id": "post-local", "name": "9.勘探后局部照", "description": "勘探后、地面可见探孔的近距离或斜视角局部照片。", "children": [] },
+            { "id": "post-aerial", "name": "10.勘探后航拍照", "description": "勘探后、能看到探孔分布的无人机垂直俯拍或整体俯视图。", "children": [] },
+            { "id": "literature-work", "name": "11.文献资料收集与整理工作照", "description": "室内查资料、文献收集、电脑整理等照片；不能和资料整理工作照复用同一张。", "children": [] },
+            { "id": "standard-hole-photos", "name": "12.标准孔照", "description": "TK 编号标准探孔照片；必须命名为 TKxx.扩展名，例如 TK01.jpg。", "children": [] },
+            { "id": "remains", "name": "13.遗迹", "description": "遗迹相关照片。无遗迹项目保留空文件夹；有遗迹项目才建土样照、现场照，必须按遗迹编号命名。", "children": [
+              { "id": "remains-soil", "name": "土样照", "description": "遗迹土样、土芯板照。", "conditional": "有遗迹项目才创建", "children": [] },
+              { "id": "remains-site", "name": "现场照", "description": "现场圈出遗迹范围、正俯摄、局部等照片。", "conditional": "有遗迹项目才创建", "children": [] }
+            ] }
+          ]
+        },
+        {
+          "id": "cad-projects",
+          "name": "3.CAD工程",
+          "description": "DWG、DXF、CAD 底图、工作图、可编辑工程文件，以及 CAD 工程配套字体、参照、底图文件。",
+          "children": []
+        },
+        {
+          "id": "interior-results",
+          "name": "4.内业成果",
+          "description": "内业阶段图纸和表格成果。",
+          "children": [
+            {
+              "id": "drawings",
+              "name": "图纸",
+              "description": "规范命名的图纸成果。",
+              "children": [
+                { "id": "single-standard-hole", "name": "单个标准孔", "description": "单个标准孔图纸，命名为 Uxx-AxxxBxxx。", "children": [] },
+                { "id": "single-remains", "name": "单个遗迹", "description": "有遗迹项目才创建，按遗迹编号命名。", "conditional": "有遗迹项目才创建", "children": [] },
+                { "id": "remains-map", "name": "遗迹分布示意图", "description": "有遗迹项目才创建。", "conditional": "有遗迹项目才创建", "children": [] }
+              ]
+            },
+            {
+              "id": "tables",
+              "name": "表格",
+              "description": "标准孔坐标、勘探单元遗迹统计表、勘探单元坐标、剖线坐标、四至范围坐标、遗迹坐标等。",
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "reports",
+          "name": "5.报告",
+          "description": "勘探计划、考古调查勘探报告、影响评估、保护方案、验收意见书、草稿、修改稿、正式稿、附件稿，以及同类技术文本。",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "deliverables",
+      "name": "4.成果资料",
+      "description": "最终成果、交付成果、组件等。第一版不允许 AI 自动归档，只能标记疑似成果资料，需人工归档。",
+      "aiAutoArchive": false,
+      "children": []
+    }
+  ],
+  "namingRules": [
+    "项目根目录按 YYYYMMDD-项目名称 命名",
+    "公文类命名为 公文标题（文号）；无文号时至少写完整文名",
+    "商务资料优先用文件实际题名和日期",
+    "报告类必须带修改日期，格式为 报告题目8位日期.扩展名",
+    "同一报告多个日期版本只保留最新日期版本，最新日期可同时保留一个可编辑文件和一个 PDF",
+    "标准孔照命名为 TKxx.扩展名",
+    "遗迹照片按 遗迹代号+序号.扩展名 命名"
+  ],
+  "manualReviewRules": [
+    "低置信度 AI 建议必须人工确认",
+    "疑似 4.成果资料 不自动归档",
+    "无法识别文件不得强行归档",
+    "同名文件不能覆盖，应提示管理员处理冲突"
+  ]
+}

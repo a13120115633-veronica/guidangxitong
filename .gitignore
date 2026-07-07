@@ -1,0 +1,79 @@
+# ============================================================
+# 系统 / 编辑器垃圾
+# ============================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.swp
+*.swo
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.local
+
+# ============================================================
+# Node.js 依赖（所有层级）
+# ============================================================
+node_modules/
+jspm_packages/
+
+# ============================================================
+# 日志
+# ============================================================
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ============================================================
+# 密钥 & 本地环境配置（绝对不能提交到 GitHub！）
+# ============================================================
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# ============================================================
+# 构建产物
+# ============================================================
+dist/
+build/
+out/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# ============================================================
+# 主项目运行时数据（动态生成，不提交）
+# ============================================================
+archive-system/backend/data/app-state.json
+archive-system/backend/data/nas-settings.json
+archive-system/backend/data/project-source-cache.json
+# archive-standard.json 是归档规范配置（业务源代码的一部分），不忽略
+
+# 上传 / 归档 / 审批队列的真实文件（包含用户数据，绝对不能提交）
+archive-system/backend/storage/00_original_uploads/*
+archive-system/backend/storage/10_ready_for_nas/*
+archive-system/backend/storage/20_ai_working/*
+archive-system/backend/storage/30_review_queue/*
+archive-system/backend/storage/40_uploaded_records/*
+archive-system/backend/storage/90_rejected/*
+archive-system/backend/storage/logs/*
+# 保留 .gitkeep 占位文件（如果后续创建的话）
+!archive-system/backend/storage/**/.gitkeep
+
+# ============================================================
+# 旧版打包交付物（可按源代码重新生成，不进版本控制）
+# ============================================================
+company_archive_dev_package_20260703/
+*.tar.gz
+*.zip

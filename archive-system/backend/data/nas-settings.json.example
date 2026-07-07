@@ -1,0 +1,8 @@
+{
+  "mountRoot": "/Volumes/你的共享盘名称",
+  "copyMode": "copy",
+  "overwrite": false,
+  "mkdirRecursive": true,
+  "autoScanIntervalMinutes": 20,
+  "savedAt": ""
+}
