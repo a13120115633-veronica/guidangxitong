@@ -267,6 +267,7 @@
       title="上传资料到本项目"
       width="95%"
       style="max-width: 560px;"
+      :append-to-body="false"
       @closed="onUploadDialogClosed"
     >
       <el-form :model="uploadForm" label-position="top" size="default">
@@ -894,5 +895,37 @@ function formatTime(t) {
   margin-top: 4px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ========== 上传对话框：修复上传区域"显示突出"问题 ==========
+ * 根因（共 4 层，层层叠加导致视觉突出）：
+ *  1. Element Plus el-dialog 默认 append-to-body=true → teleport 到 body，脱离组件树
+ *     → scoped :deep 命中不了 → 修复：L270 加 :append-to-body="false"，让 dialog 渲染在组件内
+ *  2. el-form-item__content 默认 display:flex（即使 label-position=top）
+ *     → 导致唯一子项 .el-upload 被 flex-shrink 收缩到内容宽度 382px，width:100% 无效
+ *     → 修复：:deep(.el-form-item--label-top > .el-form-item__content { display:block })
+ *  3. el-upload 默认 inline-block，不撑满父容器
+ *     → 修复：:deep(.el-upload { width:100%; display:block })
+ *  4. el-upload-dragger 默认 padding 40px 10px（上下过厚）+ tip 与 dragger 间距松散
+ *     → 修复：padding 20px 16px + margin-top 8px，比例协调、视觉整体
+ * 范围：全部 :deep() + Element Plus 官方 class（带 --label-top 后缀），零泄漏、零功能影响
+ */
+:deep(.el-form-item--label-top > .el-form-item__content) {
+  display: block;
+}
+:deep(.el-upload) {
+  width: 100%;
+  display: block;
+}
+:deep(.el-upload-dragger) {
+  width: 100%;
+  padding: 20px 16px;
+}
+:deep(.el-upload__tip) {
+  margin-top: 8px !important;
+  padding-left: 4px;
+}
+:deep(.el-upload-list) {
+  width: 100%;
 }
 </style>
