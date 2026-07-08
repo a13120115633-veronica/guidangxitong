@@ -23,7 +23,13 @@ const {
 } = require('../utils');
 const { addAuditLog } = require('./audit-service');
 const { getProjectById } = require('./project-service');
-const { guessAiSuggestion } = require('./ai-service');
+const {
+  guessAiSuggestion,
+  categoryKeyForPath,
+  displayLabelForCategoryKey,
+  displayLabelForSourceRole,
+  isDefaultBusinessCategoryPath
+} = require('./ai-service');
 
 let _extractQueueEnqueue = null;
 function attachExtractQueue(fn) {
@@ -60,6 +66,14 @@ function decorateForResponse(f) {
   patch.content_summary = f.content_summary || '';
   patch.doc_type = f.doc_type || '';
   patch.ai_model_used = f.ai_model_used || '';
+  const rawSourceRole = f.source_role || (f.uploader && String(f.uploader).includes('管理员') ? 'admin_manual' : 'employee_business');
+  patch.source_role = rawSourceRole;
+  patch.source_display = displayLabelForSourceRole(rawSourceRole);
+  const finalTargetPath = f.final_target_path || f.ai_target_path || f.final_path || '';
+  const computedCk = f.category_key || categoryKeyForPath(finalTargetPath);
+  patch.category_key = computedCk;
+  patch.category_label = displayLabelForCategoryKey(computedCk);
+  patch.is_default_category = isDefaultBusinessCategoryPath(finalTargetPath);
   return { ...f, ...patch };
 }
 
@@ -72,11 +86,15 @@ function createFileRecord({
   uploader,
   department,
   note,
-  device
+  device,
+  sourceRole
 }) {
   const id = generateId('f');
   const filenameSuggestion = guessAiSuggestion(originalName, note);
   const uploadedAt = nowText();
+  const defaultSourceRole = (uploader && String(uploader).includes('管理员')) ? 'admin_manual' : 'employee_business';
+  const finalSourceRole = sourceRole || defaultSourceRole;
+  const categoryKey = filenameSuggestion.category_key || categoryKeyForPath(filenameSuggestion.targetPath || '');
   const file = {
     id,
     project_id: projectId,
@@ -89,6 +107,15 @@ function createFileRecord({
     note: note || '',
     device: device || '',
     status: FILE_STATUSES.PENDING_REVIEW,
+
+    source_role: finalSourceRole,
+    source_display: displayLabelForSourceRole(finalSourceRole),
+
+    category_key: categoryKey,
+    category_label: displayLabelForCategoryKey(categoryKey),
+    ai_category_primary: categoryKey,
+    category_overridden: false,
+    category_override_reason: '',
 
     ai_target_path: filenameSuggestion.targetPath,
     ai_suggested_name: filenameSuggestion.suggestedName,
@@ -119,6 +146,7 @@ function createFileRecord({
     extract_debug: null,
 
     final_name: null,
+    final_target_path: filenameSuggestion.targetPath,
     final_path: null,
     ready_relative_path: null,
     review_comment: null,
@@ -127,7 +155,8 @@ function createFileRecord({
     archived_at: null
   };
   filesTable().unshift(file);
-  addAuditLog(uploader, 'upload', 'file', id, `上传 ${originalName} 至项目 ${projectId}`);
+  addAuditLog(uploader, 'upload', 'file', id,
+    `上传 ${originalName} 至项目 ${projectId}（来源：${finalSourceRole === 'admin_manual' ? '管理员端' : '商务端'}，分类：${displayLabelForCategoryKey(categoryKey)}）`);
   if (ARK_CONFIG.ENABLED && typeof _extractQueueEnqueue === 'function') {
     try { _extractQueueEnqueue(id); } catch (_) {}
   }
@@ -225,12 +254,22 @@ function getFilesByProjectId(projectId) {
   return filesTable().byProject(projectId).map(decorateForResponse);
 }
 
-function listFiles({ status, projectId, q, uploader, department, limit } = {}) {
+function listFiles({ status, projectId, q, uploader, department, categoryKey, lowConfidence, limit } = {}) {
   let results = filesTable().filter((f) => {
     if (status && f.status !== status) return false;
     if (projectId && f.project_id !== projectId) return false;
     if (uploader && f.uploader !== uploader) return false;
     if (department && f.department !== department) return false;
+    if (lowConfidence) {
+      const conf = typeof f.ai_confidence === 'number' ? f.ai_confidence : 0;
+      const contentConf = f.ai_content_suggestion && typeof f.ai_content_suggestion.confidence === 'number'
+        ? f.ai_content_suggestion.confidence : 1;
+      if (conf >= 0.6 && contentConf >= 0.6) return false;
+    }
+    if (categoryKey) {
+      const ck = f.category_key || categoryKeyForPath(f.final_target_path || f.ai_target_path || '');
+      if (String(categoryKey) !== 'all' && String(ck) !== String(categoryKey)) return false;
+    }
     if (q) {
       const query = q.toLowerCase();
       const haystack = `${f.original_name} ${f.uploader} ${f.department} ${f.note || ''} ${f.ai_suggested_name || ''} ${f.ai_target_path || ''} ${f.review_comment || ''} ${f.final_name || ''}`.toLowerCase();
@@ -242,10 +281,15 @@ function listFiles({ status, projectId, q, uploader, department, limit } = {}) {
   return results.map(decorateForResponse);
 }
 
-function listReviewTasks() {
-  return filesTable()
-    .filter((f) => [FILE_STATUSES.PENDING_REVIEW, FILE_STATUSES.NEEDS_INFO].includes(f.status))
-    .map(decorateForResponse);
+function listReviewTasks(opts = {}) {
+  const list = filesTable()
+    .filter((f) => [FILE_STATUSES.PENDING_REVIEW, FILE_STATUSES.NEEDS_INFO].includes(f.status));
+  return listFiles({
+    ...opts,
+    status: undefined
+  }).filter((f) =>
+    [FILE_STATUSES.PENDING_REVIEW, FILE_STATUSES.NEEDS_INFO].includes(f.status)
+  );
 }
 
 function assertNoFinalPathConflict(file, finalRelativePath) {
@@ -295,7 +339,7 @@ function createNasJob(file, finalPath, stagedFile) {
   return job;
 }
 
-function approveReview(fileId, { targetPath, finalName, reviewer }) {
+function approveReview(fileId, { targetPath, finalName, reviewer, categoryOverrideReason, confirmNonDefaultCategory }) {
   const file = getFileById(fileId);
   if (!file) throw new Error('文件不存在');
   const project = getProjectById(file.project_id);
@@ -320,16 +364,33 @@ function approveReview(fileId, { targetPath, finalName, reviewer }) {
   assertNoFinalPathConflict(file, finalPath);
   const stagedFile = stageFileForNas(file, finalPath);
   const reviewedAt = nowText();
+  const newCategoryKey = categoryKeyForPath(targetPath);
+  const aiPrimaryCk = file.ai_category_primary || file.category_key;
+  const finalTargetPath = targetPath;
+  const isDefaultCategory = isDefaultBusinessCategoryPath(finalTargetPath);
+  const overridden = String(Boolean(confirmNonDefaultCategory || !isDefaultCategory || newCategoryKey !== (aiPrimaryCk || ''))) === 'true' || !isDefaultCategory;
+  const saveOverridden = !isDefaultCategory || (newCategoryKey !== (aiPrimaryCk || file.category_key));
+  const saveOverrideReason = !isDefaultCategory
+    ? `归档目录「${targetPath}」不在商务端 3 个默认文件夹内（项目资料/商务资料/执行资料·报告），管理员已二次确认。${categoryOverrideReason ? ' 原因：' + categoryOverrideReason : ''}`
+    : (categoryOverrideReason || '');
   filesTable().update(fileId, {
     status: FILE_STATUSES.READY_FOR_NAS,
     final_name: safeFinalName,
+    final_target_path: finalTargetPath,
     final_path: finalPath,
     ready_relative_path: stagedFile.readyRelativePath,
-    reviewed_at: reviewedAt
+    reviewed_at: reviewedAt,
+    category_key: newCategoryKey,
+    category_label: displayLabelForCategoryKey(newCategoryKey),
+    category_overridden: saveOverridden,
+    category_override_reason: saveOverrideReason
   });
   const job = createNasJob(file, finalPath, stagedFile);
-  addAuditLog(reviewer || '管理员', 'approve', 'file', fileId, `确认整理：${finalPath}`);
-  return { file: getFileById(fileId), nasJob: job };
+  const logMsg = saveOverridden
+    ? `确认整理（已改分类，原AI推荐分类=${aiPrimaryCk || file.category_key || '-'}，最终归档=${finalTargetPath}）`
+    : `确认整理：${finalPath}`;
+  addAuditLog(reviewer || '管理员', 'approve', 'file', fileId, logMsg);
+  return { file: getFileById(fileId), nasJob: job, is_default_category: isDefaultCategory, category_overridden: saveOverridden };
 }
 
 function needsInfoReview(fileId, { comment, reviewer }) {

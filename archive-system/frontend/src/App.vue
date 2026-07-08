@@ -2,9 +2,9 @@
   <div class="app-container">
     <nav v-if="!isAdminLogin" class="nav-tabs">
       <el-tabs v-model="activeTab" class="main-tabs" @tab-change="onTabChange">
-        <el-tab-pane label="员工端" name="employee">
+        <el-tab-pane label="商务端" name="employee">
           <template #label>
-            <span><el-icon><User /></el-icon> 员工端</span>
+            <span><el-icon><User /></el-icon> 商务端</span>
           </template>
         </el-tab-pane>
         <el-tab-pane label="管理员端" name="admin-switch">

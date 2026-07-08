@@ -846,12 +846,13 @@ async function submitUpload() {
     formData.append('uploader', uploadForm.uploader.trim());
     formData.append('department', uploadForm.department.trim());
     if (uploadForm.note.trim()) formData.append('note', uploadForm.note.trim());
+    formData.append('source_role', 'employee_business');
     for (const item of uploadFileList.value) {
       const raw = item.raw || item;
       formData.append('file', raw);
     }
     await fileApi.upload(formData);
-    ElMessage.success('上传成功，等待管理员审核');
+    ElMessage.success('上传成功，等待管理员审核（AI 默认优先归入 3 个位置：项目资料 / 商务资料 / 执行资料·报告）');
     uploadDialogVisible.value = false;
     uploadSuccessCard.value = true;
     await loadDetail();

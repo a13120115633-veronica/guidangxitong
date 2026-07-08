@@ -1,6 +1,6 @@
 {
   "name": "archive-system-backend",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "公司资料统一归档系统后端 - V1 正式版",
   "main": "src/server.js",
   "scripts": {

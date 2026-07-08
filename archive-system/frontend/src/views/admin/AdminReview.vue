@@ -20,6 +20,26 @@
       </div>
     </div>
 
+    <div class="section-card" style="padding: 12px 18px 8px;">
+      <div style="margin-bottom: 8px; font-size: 13px; color: #374151; font-weight: 500;">
+        📌 按归档文件夹分类过滤（商务端默认 3 个推荐位：项目资料 / 商务资料 / 执行资料·报告）
+      </div>
+      <div class="category-tabs">
+        <div
+          v-for="tab in categoryTabs"
+          :key="tab.key"
+          :class="['cat-tab', 'cat-tab-' + tab.key, { active: activeCategoryTab === tab.key }]"
+          @click="switchCategoryTab(tab.key)"
+        >
+          <span class="cat-tab-icon">{{ tab.icon }}</span>
+          <span>{{ tab.label }}</span>
+          <span :class="['count', { outside: tab.key === 'other' }]">
+            {{ activeCategoryTab === tab.key || !hideCategoryCounts ? (categoryCounts[tab.key] ?? 0) : (categoryCounts[tab.key] ?? 0) }}
+          </span>
+        </div>
+      </div>
+    </div>
+
     <div class="section-card" v-if="loading">
       <el-skeleton :rows="4" animated />
     </div>
@@ -48,6 +68,29 @@
                 {{ extractStatusLabel(task.extract_status) }}
               </el-tag>
               <span class="file-name" style="flex: 1; min-width: 0;">{{ task.original_name }}</span>
+              <el-tag
+                size="small"
+                effect="light"
+                :class="['source-tag', task.source_role === 'admin_manual' ? 'source-admin' : 'source-business']"
+              >
+                来源：{{ task.source_display || '商务端' }}
+              </el-tag>
+              <el-tag
+                size="small"
+                effect="light"
+                :class="['category-tag', 'cat-' + (task.category_key || 'other')]"
+              >
+                分类：{{ task.category_label || '其他' }}
+              </el-tag>
+              <el-tag
+                v-if="task.category_overridden || task.is_default_category === false"
+                size="small"
+                effect="plain"
+                type="warning"
+                style="border-color:#f59e0b;color:#92400e;background:#fff7ed;"
+              >
+                ⚠ 人工已改分类
+              </el-tag>
               <el-tag
                 v-if="task.ai_confidence != null"
                 :type="task.ai_confidence < 0.6 ? 'danger' : task.ai_confidence < 0.8 ? 'warning' : 'success'"
@@ -242,8 +285,13 @@
             </div>
 
             <div class="detail-section">
-              <div class="detail-title">
-                <el-icon><EditPen /></el-icon> 整理归档（可编辑）
+              <div class="detail-title" style="justify-content: space-between;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <el-icon><EditPen /></el-icon> 整理归档（可编辑 · 归档目录不在 3 默认位时会弹提醒）
+                </div>
+                <div style="font-size: 12px; color: #64748b; font-weight: normal;">
+                  📍 商务端 3 个默认推荐位：<b style="color:#1d4ed8;">1.项目资料</b> / <b style="color:#c2410c;">2.商务资料</b> / <b style="color:#047857;">3.执行资料 / 5.报告</b>
+                </div>
               </div>
 
               <el-form label-position="top" size="default">
@@ -253,7 +301,7 @@
                     placeholder="请选择归档目录"
                     style="width: 100%;"
                     filterable
-                    @change="() => markFormDirty(task.id)"
+                    @change="(v) => onArchivePathChanged(task.id, v)"
                   >
                     <el-option
                       v-for="opt in pathOptionsNormal"
@@ -273,6 +321,32 @@
                   <div v-if="isManualPath(formMap[task.id].targetPath)" class="manual-warn">
                     <el-icon><WarningFilled /></el-icon>
                     人工选择，不由 AI 自动推荐
+                  </div>
+                  <div v-if="!isDefaultCategoryPath(formMap[task.id].targetPath)" class="non-default-category-warn">
+                    <el-icon><WarningFilled /></el-icon>
+                    <div style="flex:1;">
+                      <b>⚠ 当前归档目录不在商务端 3 个默认推荐文件夹内</b><br/>
+                      <span style="font-size: 12px;">您选择的目录：<code>{{ formMap[task.id].targetPath }}</code><br/>
+                      默认 3 个目录：<code>1.项目资料</code> / <code>2.商务资料</code> / <code>3.执行资料/5.报告</code></span>
+                    </div>
+                    <div style="display: flex; gap: 6px; align-items: center; margin-left: 10px;">
+                      <el-tag
+                        size="small"
+                        :type="formMap[task.id].nonDefaultConfirmed ? 'success' : 'warning'"
+                        effect="plain"
+                      >
+                        {{ formMap[task.id].nonDefaultConfirmed ? '✅ 已二次确认' : '❌ 请二次确认后再通过审核' }}
+                      </el-tag>
+                      <el-button
+                        size="small"
+                        type="warning"
+                        plain
+                        :icon="WarningFilled"
+                        @click="confirmNonDefaultCategory(task.id)"
+                      >
+                        {{ formMap[task.id].nonDefaultConfirmed ? '重新确认' : '点击二次确认' }}
+                      </el-button>
+                    </div>
                   </div>
                 </el-form-item>
 
@@ -437,7 +511,103 @@ const contentDialogFile = ref(null);
 const contentPayload = ref(null);
 const contentLoading = ref(false);
 const contentTab = ref('text');
+const activeCategoryTab = ref('all');
+const hideCategoryCounts = false;
 let pollTimer = null;
+
+const categoryTabs = [
+  { key: 'all',      icon: '📋', label: '全部待审核' },
+  { key: 'project',  icon: '📂', label: '项目资料' },
+  { key: 'business', icon: '💼', label: '商务资料' },
+  { key: 'report',   icon: '📑', label: '执行资料·报告' },
+  { key: 'other',    icon: '🧭', label: '其他/人工指定' }
+];
+const categoryCounts = computed(() => {
+  const map = { all: 0, project: 0, business: 0, report: 0, other: 0 };
+  (tasks.value || []).forEach(t => {
+    map.all += 1;
+    const ck = String(t.category_key || categoryKeyForPath(t.final_target_path || t.ai_target_path || ''));
+    if (map[ck] !== undefined) map[ck] += 1;
+    else map.other += 1;
+  });
+  return map;
+});
+function categoryKeyForPath(targetPath) {
+  if (!targetPath) return 'other';
+  if (String(targetPath).startsWith('1.项目资料')) return 'project';
+  if (String(targetPath).startsWith('2.商务资料')) return 'business';
+  if (String(targetPath) === '3.执行资料/5.报告' || String(targetPath).startsWith('3.执行资料/5.报告/')) return 'report';
+  return 'other';
+}
+function isDefaultCategoryPath(targetPath) {
+  if (!targetPath) return false;
+  const ck = categoryKeyForPath(targetPath);
+  return ['project', 'business', 'report'].includes(ck);
+}
+async function switchCategoryTab(key) {
+  if (activeCategoryTab.value === key) return;
+  activeCategoryTab.value = key;
+  await loadList();
+}
+async function onArchivePathChanged(taskId, newVal) {
+  markFormDirty(taskId);
+  const existing = formMap[taskId];
+  if (!existing) return;
+  if (!isDefaultCategoryPath(newVal)) {
+    existing.nonDefaultConfirmed = false;
+    existing.nonDefaultConfirmPrompted = false;
+    existing.categoryOverrideReason = '';
+    try {
+      const r = await ElMessageBox.confirm(
+        '当前选择的归档目录「' + String(newVal || '未选择') + '」不在商务端 3 个默认推荐文件夹内（项目资料 / 商务资料 / 执行资料·报告）。\n\n' +
+        '商务端通常约 99% 的归档都应归入这 3 个默认位置。若您是故意要放到其他目录（例如 CAD 工程图 / 外业原始资料 / 成果资料等），请确认继续，否则请切换回这 3 个默认目录之一。\n\n' +
+        '点击「确认仍使用该目录」后，仍需点击表单右侧的「点击二次确认」按钮一次完成最终确认，才能通过审核。',
+        '⚠ 归档目录不在 3 个默认推荐文件夹',
+        {
+          confirmButtonText: '确认仍使用该目录（非默认）',
+          cancelButtonText: '取消，改回默认目录',
+          type: 'warning',
+          distinguishCancelAndClose: true,
+          confirmButtonClass: 'el-button--warning'
+        }
+      );
+      existing.nonDefaultConfirmed = true;
+      existing.nonDefaultConfirmPrompted = true;
+      ElMessage.warning('已确认选择非默认目录。请继续点右侧「点击二次确认」按钮。');
+    } catch (e) {
+      existing.nonDefaultConfirmed = false;
+      existing.nonDefaultConfirmPrompted = false;
+    }
+  } else {
+    existing.nonDefaultConfirmed = true;
+    existing.nonDefaultConfirmPrompted = false;
+    existing.categoryOverrideReason = '';
+  }
+}
+async function confirmNonDefaultCategory(taskId) {
+  const existing = formMap[taskId];
+  if (!existing) return;
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '请输入将该文件归档至非默认文件夹的原因（将写入操作记录，必填）：',
+      '⚠ 归档路径超出默认 3 文件夹 · 二次确认',
+      {
+        confirmButtonText: '我已核实，确认归档到非默认目录',
+        cancelButtonText: '取消',
+        inputPlaceholder: '例如：该文件属于特殊归档的成果资料 / 该文件属于 CAD 工程图纸底图等（必填）',
+        inputValidator: v => !!String(v || '').trim().length >= 6 || '原因至少 6 个字符，说明为何不使用默认的 3 个归档位',
+        confirmButtonClass: 'el-button--warning',
+        type: 'warning'
+      }
+    );
+    existing.nonDefaultConfirmed = true;
+    existing.categoryOverrideReason = String(value || '').trim();
+    markFormDirty(taskId);
+    ElMessage.success('已二次确认非默认归档路径，可点击通过审核。');
+  } catch (e) {
+    if (e !== 'cancel' && e?.message) ElMessage.error(e.message);
+  }
+}
 
 function extractStatusLabel(s) {
   switch (s) {
@@ -520,7 +690,9 @@ function formatDate(s) {
 function canApprove(id) {
   const f = formMap[id];
   if (!f) return false;
-  return !!f.targetPath && !!f.finalName && !!f.finalName.trim();
+  if (!f.targetPath || !f.finalName || !String(f.finalName).trim()) return false;
+  if (!isDefaultCategoryPath(f.targetPath) && !f.nonDefaultConfirmed) return false;
+  return true;
 }
 
 async function handleDownloadFile(f) {
@@ -546,7 +718,11 @@ async function loadList(opts = {}) {
   const { silent = false } = opts;
   if (!silent) loading.value = true;
   try {
-    const data = await reviewApi.list({ q: q.value, lowConfidence: lowConfidence.value });
+    const listParams = { q: q.value, lowConfidence: lowConfidence.value };
+    if (activeCategoryTab.value && activeCategoryTab.value !== 'all') {
+      listParams.categoryKey = activeCategoryTab.value;
+    }
+    const data = await reviewApi.list(listParams);
     const list = Array.isArray(data) ? data : (data?.list || data?.data || []);
     const newSorted = [...list].sort((a, b) => {
       const ta = new Date(a.uploaded_at || 0).getTime();
@@ -618,18 +794,33 @@ async function loadList(opts = {}) {
       const finalName = cleanBaseName ? `${cleanBaseName}${origExt}` : (t.original_name || '');
 
       const existing = formMap[t.id];
+      const isDefault = isDefaultCategoryPath(suggestedTargetPath);
       if (!existing) {
         formMap[t.id] = {
           targetPath: suggestedTargetPath,
           finalName,
           _origExt: origExt,
-          _dirty: false
+          _origSuggestedTargetPath: suggestedTargetPath,
+          _dirty: false,
+          nonDefaultConfirmed: isDefault,
+          nonDefaultConfirmPrompted: false,
+          categoryOverrideReason: ''
         };
       } else {
         existing._origExt = origExt;
+        existing._origSuggestedTargetPath = suggestedTargetPath;
         if (!existing._dirty) {
-          if (existing.targetPath !== suggestedTargetPath) existing.targetPath = suggestedTargetPath;
+          if (existing.targetPath !== suggestedTargetPath) {
+            existing.targetPath = suggestedTargetPath;
+            existing.nonDefaultConfirmed = isDefault;
+            existing.nonDefaultConfirmPrompted = false;
+            existing.categoryOverrideReason = '';
+          }
           if (existing.finalName !== finalName) existing.finalName = finalName;
+        } else {
+          if (isDefaultCategoryPath(existing.targetPath)) {
+            existing.nonDefaultConfirmed = true;
+          }
         }
       }
     });
@@ -699,13 +890,32 @@ function ensureFinalNameHasExt(taskId, finalNameRaw, fallbackOrigName) {
 async function handleApprove(task) {
   const f = formMap[task.id];
   if (!f || !f.targetPath || !f.finalName?.trim()) return;
+  const isDefault = isDefaultCategoryPath(f.targetPath);
+  if (!isDefault && !f.nonDefaultConfirmed) {
+    try {
+      await confirmNonDefaultCategory(task.id);
+    } catch (_) {
+      return;
+    }
+  }
+  if (!canApprove(task.id)) return;
   const finalName = ensureFinalNameHasExt(task.id, f.finalName.trim(), task.original_name);
+  const overrideReason = (!isDefault && f.categoryOverrideReason) || '';
   try {
-    await reviewApi.approve(task.id, {
+    const result = await reviewApi.approve(task.id, {
       targetPath: f.targetPath,
-      finalName
+      finalName,
+      confirmNonDefaultCategory: !isDefault,
+      categoryOverrideReason: overrideReason
     });
-    ElMessage.success('已确认整理结果，加入待上传 NAS');
+    if (result && result.is_default_category === false) {
+      ElMessage.success({
+        message: '已确认整理结果（非默认归档位，已二次确认），加入待上传 NAS',
+        duration: 3500
+      });
+    } else {
+      ElMessage.success('已确认整理结果，加入待上传 NAS');
+    }
     loadList();
   } catch (e) {
     ElMessage.error(e.message || '操作失败');
@@ -969,5 +1179,119 @@ onBeforeUnmount(() => {
   color: #334155;
   margin: 4px 0;
   word-break: break-all;
+}
+
+/* ======= 归档文件夹分类 Tab ======= */
+.category-tabs {
+  display: inline-flex;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-wrap: wrap;
+  background: #fff;
+  gap: 0;
+}
+.cat-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #606266;
+  background: #fff;
+  border-right: 1px solid #f1f5f9;
+  transition: all .15s ease;
+  user-select: none;
+  white-space: nowrap;
+}
+.cat-tab:last-child { border-right: none; }
+.cat-tab:hover { background: #f8fafc; }
+.cat-tab.active {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: #fff;
+  font-weight: 500;
+}
+.cat-tab-icon { font-size: 15px; }
+.cat-tab .count {
+  display: inline-block;
+  margin-left: 4px;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 6px;
+  line-height: 18px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
+  text-align: center;
+}
+.cat-tab.active .count { background: rgba(255,255,255,.2); color: #fff; }
+.cat-tab.cat-tab-project:not(.active) .count { background: #dbeafe; color: #1d4ed8; }
+.cat-tab.cat-tab-business:not(.active) .count { background: #ffedd5; color: #c2410c; }
+.cat-tab.cat-tab-report:not(.active) .count { background: #d1fae5; color: #047857; }
+.cat-tab.cat-tab-other:not(.active) .count.outside { background: #fee2e2; color: #991b1b; }
+
+/* ======= 来源 / 分类 tag ======= */
+:deep(.source-tag.source-business) {
+  background: #eef2ff;
+  color: #4338ca;
+  border-color: #c7d2fe;
+  font-weight: 500;
+}
+:deep(.source-tag.source-admin) {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+  font-weight: 500;
+}
+:deep(.category-tag) { font-weight: 500; }
+:deep(.category-tag.cat-project) {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+:deep(.category-tag.cat-business) {
+  background: #fff7ed;
+  color: #c2410c;
+  border-color: #fed7aa;
+}
+:deep(.category-tag.cat-report) {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+:deep(.category-tag.cat-other) {
+  background: #f3f4f6;
+  color: #374151;
+  border-color: #d1d5db;
+}
+
+/* ======= 非默认分类 strong warning ======= */
+.non-default-category-warn {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%);
+  border: 1.5px dashed #f59e0b;
+  border-radius: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #92400e;
+  font-size: 13px;
+}
+.non-default-category-warn > svg.el-icon {
+  color: #d97706;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.non-default-category-warn code {
+  background: #fff;
+  border: 1px solid #fde68a;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11.5px;
+  color: #92400e;
+  margin: 0 1px;
 }
 </style>

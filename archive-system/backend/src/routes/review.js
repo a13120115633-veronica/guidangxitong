@@ -11,18 +11,12 @@ const router = express.Router();
 
 router.get('/review/tasks', (req, res) => {
   try {
-    const { q, lowConfidence } = req.query;
-    let tasks = listReviewTasks();
-    if (q) {
-      const query = String(q).toLowerCase();
-      tasks = tasks.filter((t) =>
-        [t.original_name, t.uploader, t.department, t.note, t.ai_target_path, t.ai_suggested_name]
-          .some((v) => String(v || '').toLowerCase().includes(query))
-      );
-    }
-    if (lowConfidence === 'true' || lowConfidence === '1') {
-      tasks = tasks.filter((t) => (t.ai_confidence || 0) < 0.6);
-    }
+    const { q, lowConfidence, categoryKey } = req.query;
+    const opts = {};
+    if (q) opts.q = q;
+    if (lowConfidence === 'true' || lowConfidence === '1') opts.lowConfidence = true;
+    if (categoryKey && categoryKey !== 'all') opts.categoryKey = categoryKey;
+    const tasks = listReviewTasks(opts);
     res.json(tasks);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -32,10 +26,16 @@ router.get('/review/tasks', (req, res) => {
 router.post('/review/tasks/:fileId/approve', (req, res) => {
   try {
     const { fileId } = req.params;
-    const { targetPath, finalName, reviewer } = req.body || {};
+    const { targetPath, finalName, reviewer, categoryOverrideReason, confirmNonDefaultCategory } = req.body || {};
     const file = getFileById(fileId);
     if (!file) return res.status(404).json({ error: '文件不存在' });
-    const result = approveReview(fileId, { targetPath, finalName, reviewer });
+    const result = approveReview(fileId, {
+      targetPath,
+      finalName,
+      reviewer,
+      categoryOverrideReason,
+      confirmNonDefaultCategory
+    });
     res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -45,10 +45,16 @@ router.post('/review/tasks/:fileId/approve', (req, res) => {
 router.post('/review/tasks/:fileId/modify', (req, res) => {
   try {
     const { fileId } = req.params;
-    const { targetPath, finalName, reviewer } = req.body || {};
+    const { targetPath, finalName, reviewer, categoryOverrideReason, confirmNonDefaultCategory } = req.body || {};
     const file = getFileById(fileId);
     if (!file) return res.status(404).json({ error: '文件不存在' });
-    const result = approveReview(fileId, { targetPath, finalName, reviewer });
+    const result = approveReview(fileId, {
+      targetPath,
+      finalName,
+      reviewer,
+      categoryOverrideReason,
+      confirmNonDefaultCategory
+    });
     res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });

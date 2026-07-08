@@ -202,7 +202,7 @@ router.post('/files/upload', (req, res) => {
         }
         return res.status(400).json({ error: err.message });
       }
-      const { projectId, uploader, department, note } = req.body;
+      const { projectId, uploader, department, note, sourceRole, source_role } = req.body;
       const files = req.files || [];
       if (!projectId || !uploader || !department || files.length === 0) {
         files.forEach((f) => { try { fs.unlinkSync(f.path); } catch (_) {} });
@@ -214,6 +214,7 @@ router.post('/files/upload', (req, res) => {
         files.forEach((f) => { try { fs.unlinkSync(f.path); } catch (_) {} });
         return res.status(404).json({ error: '项目不存在' });
       }
+      const finalSourceRole = sourceRole || source_role || (String(uploader || '').includes('管理员') ? 'admin_manual' : 'employee_business');
       const createdFiles = files.map((file) => {
         const storedRel = `storage/00_original_uploads/${path.basename(file.path)}`;
         const absPath = ensureInside(ORIGINAL_UPLOADS_DIR, file.path);
@@ -226,7 +227,8 @@ router.post('/files/upload', (req, res) => {
           uploader: String(uploader).trim(),
           department: String(department).trim(),
           note: String(note || '').trim(),
-          device: inferDevice(req.headers['user-agent'])
+          device: inferDevice(req.headers['user-agent']),
+          sourceRole: finalSourceRole
         });
       });
       res.status(201).json({ files: createdFiles, count: createdFiles.length });
