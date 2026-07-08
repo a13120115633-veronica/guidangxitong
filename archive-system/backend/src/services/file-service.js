@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { filesTable, nasJobsTable } = require('../database');
 const {
   ROOT,
@@ -654,7 +655,12 @@ function inspectNasMount(mountRoot) {
         }
       } else {
         result.writable = false;
-        result.probeMessage = `目录不可写：${writeErr?.message || writeErr?.code || writeErr || '未知错误'}`;
+        let msg = `目录不可写：${writeErr?.message || writeErr?.code || writeErr || '未知错误'}`;
+        const writeCode = writeErr?.code;
+        if (writeCode === 'EPERM' || writeCode === 'EACCES') {
+          msg += SUGGEST_RESTART_BACKEND_SMB_HINT;
+        }
+        result.probeMessage = msg;
       }
     } else {
       result.probeMessage = result.exists ? '路径不是目录' : '目录不存在（SMB 共享盘未挂载？）';
@@ -1127,6 +1133,203 @@ function resolveNasDownloadFile({ mountRoot, relativePath, absolutePath, downloa
   };
 }
 
+const RELIABLE_COPY_CHUNK_BYTES = 64 * 1024;
+
+function copyFileReliably(sourcePath, targetPath, options = {}) {
+  const { overwriteExisting = false, logPrefix = '[NASCopy]' } = options;
+  const methodsTried = [];
+  let lastErr = null;
+
+  if (!overwriteExisting && fs.existsSync(targetPath)) {
+    const e = new Error(`目标文件已存在且禁止覆盖：${targetPath}`);
+    e.code = 'EEXIST';
+    throw e;
+  }
+
+  const _layerLabel = (n, desc) => `${logPrefix} L${n}:${desc}`;
+
+  // Layer 1: fs.copyFileSync (fast path, zero memory overhead on local FS)
+  methodsTried.push('copyFileSync:L1[try]');
+  try {
+    const flags = overwriteExisting ? 0 : fs.constants.COPYFILE_EXCL;
+    fs.copyFileSync(sourcePath, targetPath, flags);
+    methodsTried[methodsTried.length - 1] = 'copyFileSync:L1[ok]';
+    return { methodUsed: 'copyFileSync', layer: 1, methodsTried };
+  } catch (l1Err) {
+    lastErr = l1Err;
+    if (l1Err.code === 'EEXIST' && !overwriteExisting) throw l1Err;
+    methodsTried[methodsTried.length - 1] = `copyFileSync:L1[fail:${l1Err.code || l1Err.errno || 'err'}]`;
+    try { fs.unlinkSync(targetPath); } catch (_) { /* ignore */ }
+    console.warn(_layerLabel(1, 'copyFileSync fallback'),
+      `code=${l1Err.code} syscall=${l1Err.syscall}`);
+  }
+
+  // Layer 2: chunked readSync/writeSync (memory safe, 64KB chunks)
+  methodsTried.push('chunkedRW:L2[try]');
+  try {
+    if (!overwriteExisting && fs.existsSync(targetPath)) {
+      const e = new Error(`目标文件已存在且禁止覆盖：${targetPath}`);
+      e.code = 'EEXIST';
+      throw e;
+    }
+    const fdIn = fs.openSync(sourcePath, 'r');
+    try {
+      const outFlags = overwriteExisting ? 'w' : 'wx';
+      const fdOut = fs.openSync(targetPath, outFlags, 0o644);
+      try {
+        const buf = Buffer.alloc(RELIABLE_COPY_CHUNK_BYTES);
+        let bytesRead;
+        while ((bytesRead = fs.readSync(fdIn, buf, 0, RELIABLE_COPY_CHUNK_BYTES, null)) > 0) {
+          fs.writeSync(fdOut, buf, 0, bytesRead, null);
+        }
+      } finally {
+        fs.closeSync(fdOut);
+      }
+    } finally {
+      fs.closeSync(fdIn);
+    }
+    methodsTried[methodsTried.length - 1] = 'chunkedRW:L2[ok]';
+    return { methodUsed: 'chunkedRW', layer: 2, methodsTried };
+  } catch (l2Err) {
+    lastErr = l2Err;
+    if (l2Err.code === 'EEXIST' && !overwriteExisting) throw l2Err;
+    methodsTried[methodsTried.length - 1] = `chunkedRW:L2[fail:${l2Err.code || l2Err.errno || 'err'}]`;
+    try { fs.unlinkSync(targetPath); } catch (_) { /* ignore */ }
+    console.warn(_layerLabel(2, 'chunkedRW fallback'),
+      `code=${l2Err.code} syscall=${l2Err.syscall}`);
+  }
+
+  // Layer 3: shell /bin/cp (OS-level, handles SMB/NFS/FUSE edge cases)
+  methodsTried.push('shellCp:L3[try]');
+  try {
+    const args = [];
+    if (!overwriteExisting) args.push('-n');
+    args.push(sourcePath, targetPath);
+    execFileSync('/bin/cp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    methodsTried[methodsTried.length - 1] = 'shellCp:L3[ok]';
+    return { methodUsed: 'shellCp', layer: 3, methodsTried };
+  } catch (l3Err) {
+    lastErr = l3Err;
+    methodsTried[methodsTried.length - 1] = `shellCp:L3[fail:status=${l3Err.status || l3Err.code || 'err'}]`;
+    console.warn(_layerLabel(3, 'shellCp final fallback failed'),
+      `status=${l3Err.status} stderr=${(l3Err.stderr || '').toString().slice(0, 160)}`);
+  }
+
+  const wrapped = new Error(
+    `多层降级复制全部失败（${methodsTried.join(' → ')}）。` +
+    `源=${sourcePath} 目标=${targetPath} ` +
+    `最后错误：${lastErr?.code || lastErr?.message || String(lastErr)}`
+  );
+  wrapped.code = 'NAS_COPY_ALL_LAYERS_FAILED';
+  wrapped.inner = lastErr;
+  wrapped.methods_tried = methodsTried;
+  throw wrapped;
+}
+
+function moveFileReliably(sourcePath, targetPath, options = {}) {
+  const { overwriteExisting = false, logPrefix = '[NASMove]' } = options;
+
+  if (!overwriteExisting && fs.existsSync(targetPath)) {
+    const e = new Error(`目标文件已存在且禁止覆盖：${targetPath}`);
+    e.code = 'EEXIST';
+    throw e;
+  }
+
+  // Layer 1: fs.renameSync (atomic, same-FS fast path)
+  try {
+    fs.renameSync(sourcePath, targetPath);
+    return { methodUsed: 'renameSync', layer: 1, copy_fallback_used: false };
+  } catch (rnErr) {
+    if (rnErr.code === 'EEXIST' && !overwriteExisting) throw rnErr;
+    console.warn(`${logPrefix} L1:renameSync fallback code=${rnErr.code}`);
+  }
+
+  // Layer 2 (rename failed, esp. EXDEV cross-device): copy + unlink source
+  const copyResult = copyFileReliably(sourcePath, targetPath, {
+    overwriteExisting,
+    logPrefix: logPrefix + ':CopyFallback'
+  });
+  try {
+    fs.unlinkSync(sourcePath);
+  } catch (unlinkErr) {
+    console.warn(`${logPrefix} copy succeeded but source unlink failed`,
+      `code=${unlinkErr.code} src=${sourcePath}`);
+  }
+  return {
+    methodUsed: copyResult.methodUsed + '+unlink',
+    layer: 2,
+    copy_fallback_used: true,
+    copy_layer: copyResult.layer,
+    methods_tried: ['renameSync:L1', ...(copyResult.methodsTried || [])]
+  };
+}
+
+const SUGGEST_RESTART_BACKEND_SMB_HINT = [
+  '',
+  '【排障建议】此错误通常由 macOS 后端进程的 NAS（SMB）共享盘认证会话过期导致，并非真实"权限不足"。',
+  '请按以下 3 步快速修复（约 1 分钟）：',
+  '  1. 在 macOS Finder 左侧「位置」栏中点击 /Volumes/personal_folder（或对应 NAS 共享卷），访问一次任意目录，刷新 SMB 认证；',
+  '  2. 回到运行后端的 IDE 终端，按 Ctrl+C 停止当前的 npm run dev，然后重新执行 npm run dev 启动新进程（新进程会继承 Finder 刷新后的有效凭证）；',
+  '  3. 回到页面点击「检测挂载点」确认状态正常，再重新执行推送即可。'
+].join('\n');
+
+function mkdirReliably(targetDir, options = {}) {
+  const { recursive = true, logPrefix = '[NASMkdir]' } = options;
+  const methodsTried = [];
+  let lastErr = null;
+  const layerLabel = (n, desc) => `${logPrefix} L${n}:${desc}`;
+
+  if (fs.existsSync(targetDir) && fs.statSync(targetDir).isDirectory()) {
+    return { methodUsed: 'alreadyExists', layer: 0, methodsTried, created: false };
+  }
+
+  // Layer 1: fs.mkdirSync with recursive (standard Node.js path, preferred)
+  methodsTried.push('mkdirSync:L1[try]');
+  try {
+    fs.mkdirSync(targetDir, { recursive });
+    methodsTried[methodsTried.length - 1] = 'mkdirSync:L1[ok]';
+    return { methodUsed: 'mkdirSync', layer: 1, methodsTried, created: true };
+  } catch (l1Err) {
+    lastErr = l1Err;
+    if (l1Err.code === 'EEXIST') {
+      methodsTried[methodsTried.length - 1] = 'mkdirSync:L1[ok:existAfterRace]';
+      return { methodUsed: 'mkdirSync:existing', layer: 1, methodsTried, created: false };
+    }
+    methodsTried[methodsTried.length - 1] = `mkdirSync:L1[fail:${l1Err.code || l1Err.errno || 'err'}]`;
+    console.warn(layerLabel(1, 'mkdirSync fallback'),
+      `code=${l1Err.code} syscall=${l1Err.syscall} target=${targetDir}`);
+  }
+
+  // Layer 2: shell /bin/mkdir -p (OS-level syscall, handles SMB/NFS/FUSE edge cases)
+  methodsTried.push('shellMkdir:L2[try]');
+  try {
+    const args = [];
+    if (recursive) args.push('-p');
+    args.push(targetDir);
+    execFileSync('/bin/mkdir', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
+      throw new Error(`shell mkdir -p 执行成功但目标目录不存在？ ${targetDir}`);
+    }
+    methodsTried[methodsTried.length - 1] = 'shellMkdir:L2[ok]';
+    return { methodUsed: 'shellMkdir', layer: 2, methodsTried, created: true };
+  } catch (l2Err) {
+    lastErr = l2Err;
+    methodsTried[methodsTried.length - 1] = `shellMkdir:L2[fail:status=${l2Err.status || l2Err.code || 'err'}]`;
+    console.warn(layerLabel(2, 'shellMkdir final fallback failed'),
+      `status=${l2Err.status} stderr=${(l2Err.stderr || '').toString().slice(0, 160)}`);
+  }
+
+  const wrapped = new Error(
+    `多层降级创建目录全部失败（${methodsTried.join(' → ')}）。` +
+    `目标=${targetDir} 最后错误：${lastErr?.code || lastErr?.message || String(lastErr)}` +
+    SUGGEST_RESTART_BACKEND_SMB_HINT
+  );
+  wrapped.code = 'NAS_MKDIR_ALL_LAYERS_FAILED';
+  wrapped.inner = lastErr;
+  wrapped.methods_tried = methodsTried;
+  throw wrapped;
+}
+
 function pushSingleJobToNas(jobId, options = {}) {
   const { actor = '管理员', dryRun = false, mountRoot, copyMode, overwriteExisting } = options;
   const job = nasJobsTable().get(jobId);
@@ -1169,39 +1372,88 @@ function pushSingleJobToNas(jobId, options = {}) {
     throw e;
   }
 
+  let mkdirReliableResult = null;
   try {
     if (!fs.existsSync(plan.targetDirectory)) {
-      if (plan.recursiveMkdir) fs.mkdirSync(plan.targetDirectory, { recursive: true });
-      else throw new Error(`目标目录不存在，且未开启递归创建：${plan.targetDirectory}`);
+      if (plan.recursiveMkdir) {
+        mkdirReliableResult = mkdirReliably(plan.targetDirectory, {
+          recursive: true,
+          logPrefix: `[NASPush:mkdir:${jobId}]`
+        });
+      } else {
+        throw new Error(`目标目录不存在，且未开启递归创建：${plan.targetDirectory}`);
+      }
+    } else {
+      mkdirReliableResult = { methodUsed: 'alreadyExists', layer: 0, methodsTried: [], created: false };
     }
   } catch (mkdirErr) {
-    const wrapped = new Error(`无法创建 NAS 目标目录（可能是权限不足或 NAS 不可写）：${plan.targetDirectory}\n原因：${mkdirErr.message || mkdirErr.code || mkdirErr}`);
+    let msg = `无法创建 NAS 目标目录（可能是权限不足或 NAS 不可写）：${plan.targetDirectory}\n原因：${mkdirErr.message || mkdirErr.code || mkdirErr}`;
+    if (mkdirErr.code === 'NAS_MKDIR_ALL_LAYERS_FAILED') {
+      msg = mkdirErr.message || msg; // 已经自带多层降级描述和友好提示
+    } else if (mkdirErr.code === 'EPERM' || mkdirErr.code === 'EACCES') {
+      msg += SUGGEST_RESTART_BACKEND_SMB_HINT;
+    }
+    const wrapped = new Error(msg);
     wrapped.code = 'NAS_MKDIR_FAILED';
     wrapped.inner = mkdirErr;
+    if (mkdirErr.methods_tried) wrapped.methods_tried = mkdirErr.methods_tried;
+    if (mkdirReliableResult) wrapped.reliable_result = mkdirReliableResult;
     throw wrapped;
   }
 
+  let reliableResult = null;
   try {
     if (plan.copyMode === 'move') {
-      fs.renameSync(plan.sourceAbsolutePath, plan.targetAbsolutePath);
+      reliableResult = moveFileReliably(
+        plan.sourceAbsolutePath,
+        plan.targetAbsolutePath,
+        { overwriteExisting: plan.overwriteExisting, logPrefix: `[NASPush:move:${jobId}]` }
+      );
     } else {
-      fs.copyFileSync(plan.sourceAbsolutePath, plan.targetAbsolutePath, plan.overwriteExisting ? 0 : fs.constants.COPYFILE_EXCL);
+      reliableResult = copyFileReliably(
+        plan.sourceAbsolutePath,
+        plan.targetAbsolutePath,
+        { overwriteExisting: plan.overwriteExisting, logPrefix: `[NASPush:copy:${jobId}]` }
+      );
     }
   } catch (cpErr) {
     let reason = cpErr.message || cpErr.code || String(cpErr);
-    if (cpErr.code === 'EACCES' || cpErr.code === 'EPERM') reason = '权限不足（NAS 目录只读 / 当前系统用户对 SMB 共享盘无写权限）';
-    else if (cpErr.code === 'ENOSPC') reason = 'NAS 磁盘空间不足';
-    else if (cpErr.code === 'ENOENT') reason = '源文件或目标目录在写入时不存在（SMB 挂载中断？）';
-    else if (cpErr.code === 'EEXIST') reason = '目标文件已存在且禁止覆盖（COPYFILE_EXCL 冲突）';
-    const wrapped = new Error(`推送文件到 NAS 失败：${reason}\n目标路径：${plan.targetAbsolutePath}`);
+    let appendHint = false;
+    if (cpErr.code === 'NAS_COPY_ALL_LAYERS_FAILED') {
+      const innerCode = cpErr.inner?.code;
+      if (innerCode === 'EACCES' || innerCode === 'EPERM') {
+        reason = '权限不足（NAS 目录只读 / 当前系统用户对 SMB 共享盘无写权限）。已尝试 3 层降级复制，全部失败。请检查 NAS 挂载权限';
+        appendHint = true;
+      } else if (innerCode === 'ENOSPC') {
+        reason = 'NAS 磁盘空间不足';
+      } else if (innerCode === 'ENOENT') {
+        reason = '源文件或目标目录在写入时不存在（SMB 挂载中断？）';
+      } else {
+        reason = `复制失败（多层降级后仍失败，tried=${cpErr.methods_tried?.join('→') || 'N/A'}）：${cpErr.inner?.message || cpErr.inner?.code || String(cpErr.inner)}`;
+        appendHint = cpErr.methods_tried?.some?.(m => m.includes('shellCp')); // L3 也失败 → 凭证问题高概率
+      }
+    } else if (cpErr.code === 'EACCES' || cpErr.code === 'EPERM') {
+      reason = '权限不足（NAS 目录只读 / 当前系统用户对 SMB 共享盘无写权限）';
+      appendHint = true;
+    } else if (cpErr.code === 'ENOSPC') {
+      reason = 'NAS 磁盘空间不足';
+    } else if (cpErr.code === 'ENOENT') {
+      reason = '源文件或目标目录在写入时不存在（SMB 挂载中断？）';
+    } else if (cpErr.code === 'EEXIST') {
+      reason = '目标文件已存在且禁止覆盖（COPYFILE_EXCL 冲突）';
+    }
+    let fullMsg = `推送文件到 NAS 失败：${reason}\n目标路径：${plan.targetAbsolutePath}`;
+    if (appendHint) fullMsg += SUGGEST_RESTART_BACKEND_SMB_HINT;
+    const wrapped = new Error(fullMsg);
     wrapped.code = 'NAS_COPY_FAILED';
     wrapped.inner = cpErr;
+    if (cpErr.methods_tried) wrapped.methods_tried = cpErr.methods_tried;
     throw wrapped;
   }
 
   const marked = markNasJobManuallyUploaded(job.id, { actor });
   addAuditLog(actor, 'push_to_nas', 'nas_job', job.id,
-    `NAS 直连推送成功：mode=${plan.copyMode} 源=${plan.sourceAbsolutePath} 目标=${plan.targetAbsolutePath}`);
+    `NAS 直连推送成功：mode=${plan.copyMode} method=${reliableResult?.methodUsed || 'N/A'} layer=${reliableResult?.layer || 'N/A'} 源=${plan.sourceAbsolutePath} 目标=${plan.targetAbsolutePath}`);
   return {
     job_id: job.id,
     file_name: job.file?.final_name || job.file?.original_name,
@@ -1210,7 +1462,8 @@ function pushSingleJobToNas(jobId, options = {}) {
     target_absolute_path: plan.targetAbsolutePath,
     target_relative_path: plan.targetRelativePath,
     uploaded_at: marked.uploaded_at,
-    status: 'pushed_and_marked_archived'
+    status: 'pushed_and_marked_archived',
+    reliable_result: reliableResult
   };
 }
 
