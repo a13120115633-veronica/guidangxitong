@@ -105,10 +105,22 @@ router.get('/nas/status', (req, res) => {
         let writeOk = false;
         let writeErr = null;
         let deleteFailed = false;
-        try {
-          fs.writeFileSync(probe, 'ok', { flag: 'wx' });
-          writeOk = true;
-        } catch (we) { writeErr = we; }
+        for (const flag of ['wx', 'w', 'a']) {
+          try {
+            fs.writeFileSync(probe, 'ok', { flag });
+            writeOk = true;
+            writeErr = null;
+            break;
+          } catch (we) {
+            const code = we?.code;
+            const allowFallback = (code === 'EPERM' || code === 'EACCES' || code === 'ENOTSUP' || code === 'EAGAIN' || code === 'EIO');
+            if (allowFallback && flag !== 'a') {
+              continue;
+            }
+            writeErr = we;
+            writeOk = false;
+          }
+        }
         if (writeOk) {
           try { fs.unlinkSync(probe); } catch (_) { deleteFailed = true; }
           writable = true;

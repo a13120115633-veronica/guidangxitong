@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ~/Library/LaunchAgents/com.user.nasmount.plist
+  用户级 LaunchAgent：以当前登录用户身份（ivan）运行 nas_mount_check.sh
+  - 登录后立刻跑一次（RunAtLoad=true）
+  - 之后每 60 秒跑一次检测（掉线自动重连，最坏 60 秒恢复）
+  - 不需要 sudo，不需要 System Keychain，直接读用户 Login Keychain 的 SMB 凭证
+  -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.nasmount</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/ivan/bin/nas_mount_check.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ivan/Library/Logs/nas_mount.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ivan/Library/Logs/nas_mount.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ivan</string>
+</dict>
+</plist>
