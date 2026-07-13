@@ -58,6 +58,8 @@ coverage/
 archive-system/backend/data/app-state.json
 archive-system/backend/data/nas-settings.json
 archive-system/backend/data/project-source-cache.json
+archive-system/backend/data/report-runs/
+!archive-system/backend/data/.gitkeep
 # archive-standard.json 是归档规范配置（业务源代码的一部分），不忽略
 
 # 上传 / 归档 / 审批队列的真实文件（包含用户数据，绝对不能提交）
@@ -70,6 +72,12 @@ archive-system/backend/storage/90_rejected/*
 archive-system/backend/storage/logs/*
 # 保留 .gitkeep 占位文件（如果后续创建的话）
 !archive-system/backend/storage/**/.gitkeep
+
+# ============================================================
+# 人员信息库 & 公司敏感隐私数据（绝对禁止提交到 GitHub！）
+# 包含：身份证正反面、劳动合同、社保证明、资质证书、公司印章、营业执照、xlsx资料卡等
+# ============================================================
+archive-system/backend/skills/*/assets/company-personnel-library/
 
 # ============================================================
 # 旧版打包交付物（可按源代码重新生成，不进版本控制）
