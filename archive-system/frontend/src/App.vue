@@ -18,6 +18,7 @@
       <el-button size="small" @click="goAdmin('review')" :type="adminPage==='review'?'primary':''">待审核归档</el-button>
       <el-button size="small" :icon="Upload" @click="setNasModeAndGo('jobs')" :type="(adminPage==='nas' && nasCurrentMode==='jobs')?'primary':''">待上传（推送 NAS）</el-button>
       <el-button size="small" :icon="FolderOpened" @click="setNasModeAndGo('browse')" :type="(adminPage==='nas' && nasCurrentMode==='browse')?'primary':''">NAS 归档浏览（下载）</el-button>
+      <el-button size="small" :icon="Reading" @click="goAdmin('report')" :type="adminPage==='report'?'primary':''">智能报告生成</el-button>
       <el-button size="small" :icon="Tools" @click="goAdmin('workbench')" :type="adminPage==='workbench'?'primary':''">管理员工作台</el-button>
       <el-button size="small" text @click="exitAdmin">退出管理员</el-button>
     </div>
@@ -25,6 +26,7 @@
     <router-view v-if="!isAdminLogin" />
     <AdminReview v-else-if="adminPage==='review'" />
     <AdminNas v-else-if="adminPage==='nas'" />
+    <AdminReportGenerator v-else-if="adminPage==='report'" />
 
     <div v-else-if="adminPage==='workbench'" class="workbench-wrap">
       <div class="page-header">
@@ -53,9 +55,10 @@
 import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { ElMessageBox } from 'element-plus';
-import { User, Setting, Upload, FolderOpened, List, DocumentCopy, DataAnalysis, Tools } from '@element-plus/icons-vue';
+import { User, Setting, Upload, FolderOpened, List, DocumentCopy, DataAnalysis, Tools, Reading } from '@element-plus/icons-vue';
 import AdminReview from './views/admin/AdminReview.vue';
 import AdminNas from './views/admin/AdminNas.vue';
+import AdminReportGenerator from './views/admin/AdminReportGenerator.vue';
 import AdminAuditLogs from './views/admin/AdminAuditLogs.vue';
 import AdminStandard from './views/admin/AdminStandard.vue';
 import AdminSync from './views/admin/AdminSync.vue';
@@ -80,8 +83,14 @@ onMounted(() => {
   if (!saved) localStorage.setItem('archive_uploader', '');
   const savedMode = localStorage.getItem(NAS_MODE_KEY);
   if (savedMode === 'browse' || savedMode === 'jobs') nasCurrentMode.value = savedMode;
+  try {
+    if (localStorage.getItem(ADMIN_LOGIN_KEY) === '1') {
+      isAdminLogin.value = true;
+    }
+  } catch (_) {}
 });
 
+const ADMIN_LOGIN_KEY = 'archive_admin_logged_in';
 function onTabChange(name) {
   if (name === 'admin-switch') {
     activeTab.value = 'employee';
@@ -93,6 +102,7 @@ function onTabChange(name) {
     }).then(() => {
       isAdminLogin.value = true;
       adminPage.value = 'review';
+      try { localStorage.setItem(ADMIN_LOGIN_KEY, '1'); } catch (_) {}
     }).catch(() => {});
   } else {
     router.push('/');
@@ -104,7 +114,10 @@ function setNasModeAndGo(mode) {
   try { localStorage.setItem(NAS_MODE_KEY, mode); } catch (_) {}
   adminPage.value = 'nas';
 }
-function exitAdmin() { isAdminLogin.value = false; }
+function exitAdmin() {
+  isAdminLogin.value = false;
+  try { localStorage.removeItem(ADMIN_LOGIN_KEY); } catch (_) {}
+}
 </script>
 
 <style scoped>

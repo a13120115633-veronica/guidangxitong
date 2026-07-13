@@ -2,8 +2,20 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 30000
+  timeout: 120000
 });
+
+const ADMIN_PASS_KEY = 'archive_admin_logged_in';
+
+api.interceptors.request.use((config) => {
+  try {
+    if (localStorage.getItem(ADMIN_PASS_KEY) === '1') {
+      config.headers = config.headers || {};
+      config.headers['x-admin-password'] = 'admin123';
+    }
+  } catch (_) {}
+  return config;
+}, (err) => Promise.reject(err));
 
 api.interceptors.response.use(
   (res) => {
@@ -143,13 +155,48 @@ export const adminApi = {
   downloadNasFile: async ({ mountRoot, relativePath, absolutePath, downloadName } = {}) => {
     const params = {};
     if (mountRoot) params.mount_root = mountRoot;
-    if (relativePath) params.relative_path = relativePath;
+    if (relativePath) params.relative_path = relative_path;
     if (absolutePath) params.absolute_path = absolutePath;
     if (downloadName) params.download_name = downloadName;
     return api.get('/nas/file/download', { params, responseType: 'blob' });
   },
   auditLogs: (limit = 200) => api.get(`/audit-logs?limit=${limit}`),
   mcpTools: (payload) => api.post('/integrations/mcp/tools', payload || {})
+};
+
+export const reportApi = {
+  ADMIN_PASS_KEY,
+  setAdminLoggedIn: (flag) => {
+    try { localStorage.setItem(ADMIN_PASS_KEY, flag ? '1' : '0'); } catch (_) {}
+  },
+  isAdminLoggedIn: () => {
+    try { return localStorage.getItem(ADMIN_PASS_KEY) === '1'; } catch (_) { return false; }
+  },
+  skillsStatus: () => api.get('/report/skills/status'),
+  listNasProjects: () => api.get('/report/nas-projects'),
+  listRuns: () => api.get('/report/runs'),
+  getRun: (runId) => api.get(`/report/runs/${runId}`),
+  createRun: (payload) => api.post('/report/runs', payload || {}),
+  resetRun: (runId) => api.post(`/report/runs/${runId}/reset`),
+  runPreflight: (runId) => api.post(`/report/runs/${runId}/preflight`),
+  runPrepare: (runId) => api.post(`/report/runs/${runId}/prepare`),
+  download: (runId, file) => `/api/report/runs/${runId}/download/${encodeURIComponent(file)}`,
+  downloadBlob: (runId, file) => api.get(`/report/runs/${runId}/download/${encodeURIComponent(file)}`, { responseType: 'blob' }),
+  uploadManualForm: (runId, file, onProgress) => {
+    const fd = new FormData();
+    fd.append('manualForm', file);
+    return api.post(`/report/runs/${runId}/upload-manual-form`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: onProgress ? (e) => onProgress(Math.round((e.loaded * 100) / (e.total || 1))) : undefined
+    });
+  },
+  recommend: (runId, personnelSet) => api.post(`/report/runs/${runId}/recommend`, { personnelSet }),
+  validateTimeline: (runId) => api.post(`/report/runs/${runId}/validate-timeline`),
+  generate: (runId, confirmTemplate = true) => api.post(`/report/runs/${runId}/generate`, { confirmTemplate }),
+  audit: (runId, payload) => api.post(`/report/runs/${runId}/audit`, payload || {}),
+  pushToNas: (runId, nasProjectPath) => api.post(`/report/runs/${runId}/push-to-nas`, { nasProjectPath }),
+  getManualJson: (runId) => api.get(`/report/runs/${runId}/manual-json`),
+  updateManualAndBuild: (runId, payload) => api.post(`/report/runs/${runId}/update-manual-and-build`, { payload })
 };
 
 export default api;
