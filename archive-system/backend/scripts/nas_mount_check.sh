@@ -15,7 +15,7 @@
 
 # ---------- 配置（跟 setup_autofs.sh 保持一致）----------
 NAS_USER_ENC="%E5%86%AF%E5%86%B0%E9%92%B0"   # 冯冰钰 UTF-8 percent-encode
-NAS_HOST="192.168.31.164"
+NAS_HOST="192.168.31.131"
 NAS_SHARE="personal_folder"
 LIVE_MOUNT="/System/Volumes/Data/nas/${NAS_SHARE}"
 SMB_URL="smb://${NAS_USER_ENC}@${NAS_HOST}/${NAS_SHARE}"
@@ -162,7 +162,7 @@ else
     CNT=$((CNT+1))
     echo "$CNT" > "$AUTH_FAIL_COUNT"
     if [ "$CNT" -eq 3 ]; then
-      log "🔔 连续 3 次认证失败（RC=77）→ 请在 Keychain Access.app 中：找到 192.168.31.164 SMB Internet Password → 访问控制 → 添加 /sbin/mount_smbfs 到允许列表"
+      log "🔔 连续 3 次认证失败（RC=77）→ 请在 Keychain Access.app 中：找到 192.168.31.131 SMB Internet Password → 访问控制 → 添加 /sbin/mount_smbfs 到允许列表"
     fi
   fi
   log "❌ mount_smbfs 失败 RC=${RC}（可能 NAS 刚掉线或 Keychain 未解锁，60 秒后再试）"

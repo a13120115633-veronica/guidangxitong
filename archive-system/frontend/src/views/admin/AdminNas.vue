@@ -499,12 +499,13 @@
         <el-form-item label="NAS 挂载根路径" required>
           <el-input
             v-model="nasSettingsForm.mountRoot"
-            placeholder="例如 macOS: /Volumes/公司归档/项目资料   Windows: Z:\公司归档\项目资料"
+            placeholder="macOS 示例：/Volumes/personal_folder   或   /System/Volumes/Data/nas/personal_folder"
           />
           <div style="font-size: 12px; color: #94a3b8; margin-top: 4px; line-height: 1.6;">
-            把 NAS 通过 Finder / 网络映射 挂载到本机后，填能直接读写的绝对路径。
-            这个路径可以在「NAS 设置」里临时填（本次会话生效，重启后端后会回到 .env 配置），
-            或写进 backend/.env 的 NAS_MOUNT_ROOT 永久生效。
+            <b style="color:#ef4444;">⚠️ 注意：这里不要填 smb:// 网络地址！</b><br />
+            正确做法：先用 Finder ⌘+K 连接 <code style="background:#f1f5f9;padding:0 4px;border-radius:3px;">smb://192.168.31.131/personal_folder</code>，
+            挂载成功后，把本机实际的绝对路径（例如 <code>/Volumes/personal_folder</code>）粘贴到这里。
+            填好后可以点右侧「检测挂载点」验证是否可读可写。
           </div>
         </el-form-item>
         <el-form-item label="推送模式" required>
@@ -536,6 +537,14 @@
           <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
             <el-button :icon="Search" @click="probeNasMount" :disabled="!nasSettingsForm.mountRoot?.trim()">
               检测挂载点
+            </el-button>
+            <el-button
+              :icon="FolderOpened"
+              @click="openFinderSmbLink"
+              type="success"
+              plain
+            >
+              🔗 一键打开 Finder 连接 SMB（推荐：先点这个挂载）
             </el-button>
             <el-tag
               v-if="nasProbeStatus"
@@ -1049,10 +1058,48 @@ function onNasSettingsClosed() {
   nasProbeStatus.value = null;
 }
 
+function _isNetworkUrl(p) {
+  if (!p) return false;
+  const s = String(p).trim().toLowerCase();
+  if (/^(smb|cifs|afp|nfs|ftp|sftp|webdav|https?):\/\//.test(s)) return true;
+  if (/^\\\\[^\\]/.test(s)) return true;
+  return false;
+}
+function _showNetPathError(p) {
+  ElMessageBox.alert(
+    `<div style="line-height:1.8;font-size:13px;">
+      <p>你填的路径 <code style="background:#fef2f2;color:#b91c1c;padding:1px 5px;border-radius:3px;">${String(p).trim()}</code> 是 SMB 网络地址，<b style="color:#dc2626;">不能直接填这里！</b></p>
+      <p style="margin-top:8px;"><b>正确操作（2 步）：</b></p>
+      <p>① 在 macOS Finder 中按 <b>⌘ + K</b>，粘贴 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">smb://192.168.31.131/personal_folder</code>，连接并输入账号密码挂载</p>
+      <p>② 挂载成功后，Finder 左侧「位置」会出现 <b>personal_folder</b> 磁盘，此时实际路径通常是 <code style="background:#f1f5f9;padding:1px 5px;border-radius:3px;">/Volumes/personal_folder</code>，<b>把这个本地绝对路径</b>粘贴到上面的输入框</p>
+    </div>`,
+    '❌ 路径格式错误：不能填 smb:// 网络地址',
+    {
+      confirmButtonText: '我知道了，先去 Finder 挂载',
+      dangerouslyUseHTMLString: true,
+      type: 'error'
+    }
+  ).catch(() => {});
+}
+
+function openFinderSmbLink() {
+  const smbUrl = 'smb://192.168.31.131/personal_folder';
+  try {
+    window.open(smbUrl, '_blank');
+    ElMessage.info('已唤起 Finder「连接服务器」窗口，请输入账号密码完成挂载后回到本页面点「检测挂载点」');
+  } catch (_) {
+    ElMessage.warning('无法自动打开 Finder，请手动按 ⌘ + K，粘贴地址：smb://192.168.31.131/personal_folder');
+  }
+}
+
 async function probeNasMount() {
   const p = (nasSettingsForm.mountRoot || '').trim();
   if (!p) {
     ElMessage.warning('请先填写 NAS 挂载根路径');
+    return;
+  }
+  if (_isNetworkUrl(p)) {
+    _showNetPathError(p);
     return;
   }
   try {
@@ -1078,6 +1125,11 @@ async function probeNasMount() {
 async function onNasSettingsSaved() {
   if (!nasSettingsForm.mountRoot?.trim()) {
     ElMessage.warning('请先填写 NAS 挂载根路径');
+    return;
+  }
+  const p = nasSettingsForm.mountRoot.trim();
+  if (_isNetworkUrl(p)) {
+    _showNetPathError(p);
     return;
   }
   const payload = {
