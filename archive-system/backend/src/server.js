@@ -11,6 +11,7 @@ const projectRoutes = require('./routes/projects');
 const fileRoutes = require('./routes/files');
 const reviewRoutes = require('./routes/review');
 const adminRoutes = require('./routes/admin');
+const reportRoutes = require('./routes/report');
 
 [STORAGE_DIR, DATA_DIR, READY_FOR_NAS_DIR, ORIGINAL_UPLOADS_DIR].forEach((dir) => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -32,6 +33,7 @@ app.use('/api', projectRoutes);
 app.use('/api', fileRoutes);
 app.use('/api', reviewRoutes);
 app.use('/api', adminRoutes);
+app.use('/api', reportRoutes);
 
 const FRONTEND_DIR = path.join(ROOT, '..', 'frontend', 'dist');
 if (fs.existsSync(FRONTEND_DIR)) {
